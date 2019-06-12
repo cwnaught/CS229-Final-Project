@@ -1,0 +1,146 @@
+# -*- coding: utf-8 -*-
+"""
+Implements a form of Naive Bayes with a prior determined using Survival Analysis
+
+@author: Chris Naughton
+"""
+import numpy as np
+import matplotlib.pyplot as plt
+
+def calibrate(x,tte,tf=10):
+    #/////Calculate S(t) using Kaplan Meier\\\\\
+    n = len(tte)
+    m = len(tte[tte < tf])
+    S = 1.0
+    
+    for i in range(m):
+        rm = n-i
+        S = S*(1-1/rm)
+        
+    #/////Calculate psi parameters\\\\\
+    #First find the parameters for f>(x,t)
+    mu = np.sum(x[tte > tf],axis=0)/(n-m)
+    dev = (np.sum(x[tte > tf]**2,axis=0)/(n-m) - mu**2)**(1/2)
+    
+    #Next find the parameters for f<(x,t)
+    theta = np.sum(x[tte < tf],axis=0)/(m)
+    dev2 = (np.sum(x[tte < tf]**2,axis=0)/(m) - theta**2)**(1/2)
+    
+    return np.vstack((mu,dev,theta,dev2)), S
+
+def predict(x,param,S):
+    n, p = x.shape
+    predict = np.zeros(n)
+
+    for i in range(n):
+        fgreat = 1
+        fless = 1
+        g = (x[i]-param[0])/param[1]
+        l = (x[i]-param[2])/param[3]
+        for j in range(p):
+            fgreat = fgreat*np.exp(-1/2*g[j]**2)/(2*np.pi)**(1/2)
+            fless = fless*np.exp(-1/2*l[j]**2)/(2*np.pi)**(1/2)
+        
+        psi = fgreat/(fgreat*S+fless*(1-S))
+        predict[i] = np.round(psi*S)
+        
+    return predict
+
+"""Start of Program"""
+
+#/////Read the relevant data files\\\\\
+#Import the anomaly data
+datapath = r'data.csv'
+tte = np.loadtxt(datapath, delimiter=',', skiprows=1, usecols=(2), dtype=float)
+bird = np.loadtxt(datapath, delimiter=',', skiprows=1, usecols=(1), dtype=str)
+ssn = np.loadtxt(datapath, delimiter = ',', skiprows=1, usecols=(4), dtype = float)
+long = np.loadtxt(datapath, delimiter = ',', skiprows=1, usecols=(5), dtype = float)
+month = np.loadtxt(datapath, delimiter = ',', skiprows=1, usecols=(6), dtype = float)
+
+#Import the satellite features
+sfpath = r'satfeat.csv'
+feat = np.loadtxt(sfpath, delimiter=',', skiprows=1, usecols=(2,3,4), dtype=float)
+name = np.loadtxt(sfpath, delimiter=',', skiprows=1, usecols=(1), dtype=str)
+
+"""|--For each example, the feature format is:---------|
+   |--[Perigee(km), Inclination(deg), Mass(kg)]--------|"""
+
+n = len(tte)
+p = feat.shape[1]
+
+#Add noise so that events don't happen at the exact same time
+noise = np.random.normal(loc=0, scale=1e-3, size = n)
+tte = tte + noise
+
+#Create the feature matrix by stacking the appropriate features
+x = np.zeros((n,p+3))
+
+for i in range(n):
+    x[i,0:p] = feat[name == bird[i]]
+    x[i,p] = ssn[i]
+    x[i,p+1] = long[i]
+    x[i,p+2] = month[i]
+
+#/////Split the data into a training and validation set\\\\\
+numsets = 10
+j = 1
+split = np.zeros(n)
+for i in range(n):
+    split[i] = j
+    j += 1
+    if j > 10:
+        j = 1
+
+tsets = []
+xsets = []
+
+for i in range(numsets):
+    tsets.append(tte[split==i])
+    xsets.append(x[split==i])
+    
+    
+#/////Calibrate using the training set & test on the validation set\\\\\
+x_train = xsets[0]
+t_train = tsets[0]
+x_valid = xsets[numsets-1]
+t_valid = tsets[numsets-1]
+
+for i in range(numsets-3):
+    x_train = np.concatenate((x_train,xsets[i+1]))
+    t_train = np.concatenate((t_train,tsets[i+1]))
+
+tfvec = np.linspace(1,365,365)
+predvecv = np.zeros(len(t_valid))
+predvect = np.zeros(len(t_train))
+
+for tf in tfvec:
+    param, S = calibrate(x_train,t_train,tf)
+    
+    predictionsv = predict(x_valid,param,S)
+    predictionst = predict(x_train,param,S)
+    
+    for i in range(len(predvecv)):
+        if predvecv[i] == 0 and predictionsv[i] == 0:
+            predvecv[i] = tf
+    
+    for k in range(len(predvect)):
+        if predvect[i] == 0 and predictionst[i] ==0:
+            predvect[i] = tf
+    
+err_v_nb = np.abs((predvecv-t_valid)/t_valid)
+err_t_nb = np.abs((predvect-t_train)/t_train)
+
+print('NB traininng set had an average error of {}'.format(np.mean(err_t_nb)))
+print('NB validation set had an average error of {}'.format(np.mean(err_v_nb)))
+
+plt.scatter(t_valid,predvecv)
+plt.xlim([0,30])
+plt.ylim([0,30])
+
+plt.figure()
+plt.scatter(t_train,predvect)
+
+#accuracy = np.sum(np.abs(predictions-actual))/len(t_valid)
+
+#print(1-accuracy)
+    
