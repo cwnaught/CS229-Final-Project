@@ -1,0 +1,105 @@
+# -*- coding: utf-8 -*-
+"""
+SVM and Linear Regression Testing
+
+@author: Chris Naughton
+"""
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.svm import SVR
+from sklearn.linear_model import LinearRegression
+
+#/////Read the relevant data files\\\\\
+#Import the anomaly data
+datapath = r'data.csv'
+tte = np.loadtxt(datapath, delimiter=',', skiprows=1, usecols=(2), dtype=float)
+bird = np.loadtxt(datapath, delimiter=',', skiprows=1, usecols=(1), dtype=str)
+ssn = np.loadtxt(datapath, delimiter = ',', skiprows=1, usecols=(4), dtype = float)
+long = np.loadtxt(datapath, delimiter = ',', skiprows=1, usecols=(5), dtype = float)
+month = np.loadtxt(datapath, delimiter = ',', skiprows=1, usecols=(6), dtype = float)
+
+#Import the satellite features
+sfpath = r'satfeat.csv'
+feat = np.loadtxt(sfpath, delimiter=',', skiprows=1, usecols=(2,3,4), dtype=float)
+name = np.loadtxt(sfpath, delimiter=',', skiprows=1, usecols=(1), dtype=str)
+
+"""|--For each example, the feature format is:---------|
+   |--[Perigee(km), Inclination(deg), Mass(kg)]--------|"""
+
+n = len(tte)
+p = feat.shape[1]
+
+#Add noise so that events don't happen at the exact same time
+noise = np.random.normal(loc=0, scale=1e-3, size = n)
+tte = tte + noise
+
+#Create the feature matrix by stacking the appropriate features
+x = np.zeros((n,p+3))
+
+for i in range(n):
+    x[i,0:p] = feat[name == bird[i]]
+    x[i,p] = ssn[i]
+    x[i,p+1] = long[i] * 1e6
+    x[i,p+2] = month[i]
+
+#/////Split the data into a training and validation set\\\\\
+numsets = 10
+j = 1
+split = np.zeros(n)
+for i in range(n):
+    split[i] = j
+    j += 1
+    if j > numsets:
+        j = 1
+
+tsets = []
+xsets = []
+
+for i in range(numsets):
+    tsets.append(tte[split==i])
+    xsets.append(x[split==i])
+    
+    
+#/////Calibrate using the training set & test on the validation set\\\\\
+x_train = xsets[0]
+t_train = tsets[0]
+x_valid = xsets[numsets-1]
+t_valid = tsets[numsets-1]
+
+for i in range(numsets-2):
+    x_train = np.concatenate((x_train,xsets[i+1]))
+    t_train = np.concatenate((t_train,tsets[i+1]))
+
+clf = SVR(kernel = 'rbf',gamma='auto', C=10.0, epsilon=0.1, max_iter = 100000)
+clf.fit(x_train,t_train)
+
+reg = LinearRegression().fit(x_train,t_train)
+
+predl_v = reg.predict(x_valid)
+predl_t = reg.predict(x_train)
+
+predsvm_v = clf.predict(x_valid)
+predsvm_t = clf.predict(x_train)
+
+plt.scatter(t_valid,predsvm_v)
+plt.xlim([0,50])
+plt.ylim([0,50])
+
+err_svmt = abs((predsvm_t-t_train)/t_train)
+err_svmv = abs((predsvm_v-t_valid)/t_valid)
+
+print('SVM traininng set had an average error of {}'.format(np.mean(err_svmt)))
+print('SVM validation set had an average error of {}'.format(np.mean(err_svmv)))
+
+plt.figure()
+plt.scatter(t_valid,predl_v)
+plt.xlim([0,60])
+plt.ylim([0,60])
+
+err_lt = abs((predl_t-t_train)/t_train)
+err_lv = abs((predl_v-t_valid)/t_valid)
+
+print('LG traininng set had an average error of {}'.format(np.mean(err_lt)))
+print('LG validation set had an average error of {}'.format(np.mean(err_lv)))
+
+
